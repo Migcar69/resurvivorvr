@@ -1,0 +1,31 @@
+# --- the game: never in the repository (each player uses their own disc) ---
+*.bin
+*.cue
+*.iso
+*.img
+*.chd
+extracted/
+states/
+*.st
+*.mcd
+ram_*.bin
+# weapon models made from the game itself (development only, never published; players rebuild them: resvr_weapons.bin)
+src/game/*_model.h
+!src/game/rocket_model.h
+!src/game/glock_model.h
+
+# --- build output ---
+build*/
+dist/
+__pycache__/
+
+# --- development material (reference photos, captures, logs) ---
+*.jpg
+*.jpeg
+*.webp
+*.png
+*.bmp
+*.log
+vr_options.ini
+calls.txt
+vram_uploads.txt
