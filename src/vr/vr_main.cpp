@@ -1473,6 +1473,36 @@ int vr_main(int, char **) {
             hands[h].kick = 0;  // no visual recoil (it moved the aim right after a shot)
             hands[h].ray_dot = false;
             hands[h].ray_len = 4;
+            hands[h].support = false;
+        }
+        // The shotgun with both hands: the other hand's grip (squeeze) on the pump - 41 cm behind the muzzle, 2 cm
+        // under the barrel's line (measured in the headset: usa_snap_20261121_143126) - holds it there; the barrel
+        // then points from the weapon hand through the other hand. It starts within 15 cm of the pump and lasts while
+        // the grip is held.
+        {
+            static bool two_hands = false;
+            const vrhands::PistolModel *pm = (const vrhands::PistolModel *)game::weapon_model(held_weapon);
+            const int oh = 1 - ph;
+            bool can = held_weapon == 5 && pm && hands[ph].valid && hands[oh].valid;
+            if (!can || hands[oh].squeeze < 0.35f) two_hands = false;
+            if (can) {
+                float anchor[3] = {0, pm->muzzle_y - 0.020f, pm->muzzle_z + 0.413f};
+                if (!two_hands && hands[oh].squeeze > 0.6f) {
+                    Mat4 pf = vrhands::pistol_muzzle(hands[ph]);  // (one hand: where the pump is now)
+                    float p[3], dd = 0;
+                    for (int r = 0; r < 3; r++) {
+                        p[r] = pf.m[r][1] * (anchor[1] - pm->muzzle_y) + pf.m[r][2] * (anchor[2] - pm->muzzle_z) + pf.m[r][3];
+                        float e = p[r] - hands[oh].grip.m[r][3];
+                        dd += e * e;
+                    }
+                    two_hands = dd < 0.15f * 0.15f;
+                }
+                if (two_hands) {
+                    hands[ph].support = true;
+                    for (int r = 0; r < 3; r++)
+                        hands[ph].support_pos[r] = hands[oh].grip.m[r][3], hands[ph].support_anchor[r] = anchor[r];
+                }
+            }
         }
         // (a long frame while playing keeps the last 3D frame: no flash of the virtual screen)
         bool in_3d_now = is3d && ((emu_frames - last_render_emu < 25 && emu_frames - last_cap_emu < 20) || eo_slow_play ||
@@ -1508,9 +1538,9 @@ int vr_main(int, char **) {
             } else if (vr_menu_open) {
                 if (pressed[B_X] || pressed[B_B]) vr_menu_open = false, menu_swallow = 12;
 #ifdef PSXVR_DEV
-                const int N = 8;  // (development: save / load a state for analysis)
+                const int N = 8, LOAD_LINE = 7;  // (development: also "save a state for analysis")
 #else
-                const int N = 6;
+                const int N = 7, LOAD_LINE = 6;  // (saves: the right stick's click saves, this line loads)
 #endif
                 if (step) menu_sel = (menu_sel - step + N) % N;  // stick up = previous line
                 int change = pressed[B_A] ? 1 : xstep;
@@ -1521,8 +1551,10 @@ int vr_main(int, char **) {
                     if (menu_sel == 3) opt.hud = !opt.hud;
                     if (menu_sel == 4) opt.hud_dist = pressed[B_A] ? (opt.hud_dist + 1) % 3 : std::max(0, std::min(2, opt.hud_dist + change));
                     if (menu_sel == 5) opt.headshot = !opt.headshot, game::set_headshot(opt.headshot);
+#ifdef PSXVR_DEV
                     if (menu_sel == 6 && pressed[B_A]) snap_request = true;
-                    if (menu_sel == 7 && !load_list.empty()) {
+#endif
+                    if (menu_sel == LOAD_LINE && !load_list.empty()) {
                         if (pressed[B_A]) {
                             load_request = "states/" + load_list[load_pick];
                             vr_menu_open = false, menu_swallow = 12;
@@ -1555,7 +1587,12 @@ int vr_main(int, char **) {
                                                          std::to_string(load_pick + 1) + "/" + std::to_string(load_list.size())));
                 lines.push_back("Stick: select / adjust     A: change / load     B / X: close");
 #else
-                lines.push_back("Stick: select / adjust     A: change     B / X: close");
+                lines.push_back(std::string(menu_sel == 6 ? ">" : "") + "Load save\t" +
+                                (load_list.empty() ? std::string("NONE")
+                                                   : "<  " + save_label(load_list[load_pick]) + "  >  " +
+                                                         std::to_string(load_pick + 1) + "/" + std::to_string(load_list.size())));
+                lines.push_back("Stick: select / adjust     A: change / load     B / X: close");
+                lines.push_back("Right stick click: save");
 #endif
                 menu_panel.render(lines, 1024, 640);
             } else if (show_hint) {
@@ -1584,9 +1621,7 @@ int vr_main(int, char **) {
                     haptic_pulse(sess, 1, 0.3f, 0.05f);
                 }
             } else {
-#ifdef PSXVR_DEV
-                if (prev_recenter && !rc_done) snap_request = true;  // (development: a snapshot for analysis)
-#endif
+                if (prev_recenter && !rc_done) snap_request = true;  // a short click: save (load it from the VR options)
                 rc_held = 0, rc_done = false;
             }
         }
@@ -1847,7 +1882,7 @@ int vr_main(int, char **) {
             }
             if (snap_request) {
                 snap_request = false;
-                char notes[1024];
+                char notes[2048];
                 Mat4 mz = hands[ph].valid ? vrhands::pistol_muzzle(hands[ph]) : identity();
                 snprintf(notes, sizeof notes,
                          "head_yaw_deg %.2f\nhead_pitch_deg %.2f\nworld_yaw_deg %.2f\nview_game_yaw_deg %.2f\n"
@@ -1859,6 +1894,32 @@ int vr_main(int, char **) {
                          aim_dist, hands[ph].trigger, mz.m[0][3], mz.m[1][3], mz.m[2][3], -mz.m[0][2], -mz.m[1][2], -mz.m[2][2],
                          head_mat.m[0][3], head_mat.m[1][3], head_mat.m[2][3], pos_ref[0], pos_ref[1], pos_ref[2],
                          frame_abs_yaw * 57.2958f, frame_pitch * 57.2958f, opt.pistol_hand, (int)opt.laser, opt.turn, (int)opt.hud);
+                // (both hands: the other hand's grip in the weapon's own axes, from the muzzle: x right, y up, z back
+                // along the barrel - where a second hand should hold a long gun)
+                {
+                    std::string extra;
+                    char line[256];
+                    for (int h = 0; h < 2; h++) {
+                        const Mat4 &g = hands[h].grip;
+                        snprintf(line, sizeof line, "hand_%s valid %d grip %.3f %.3f %.3f fwd %.3f %.3f %.3f up %.3f %.3f %.3f\n",
+                                 h ? "right" : "left", (int)hands[h].valid, g.m[0][3], g.m[1][3], g.m[2][3], -g.m[0][2],
+                                 -g.m[1][2], -g.m[2][2], g.m[0][1], g.m[1][1], g.m[2][1]);
+                        extra += line;
+                    }
+                    if (hands[ph].valid && hands[1 - ph].valid) {
+                        Mat4 inv = mat_rigid_inverse(mz);
+                        const Mat4 &g = hands[1 - ph].grip;
+                        float p[3], f[3];
+                        for (int r = 0; r < 3; r++) {
+                            p[r] = inv.m[r][0] * g.m[0][3] + inv.m[r][1] * g.m[1][3] + inv.m[r][2] * g.m[2][3] + inv.m[r][3];
+                            f[r] = -(inv.m[r][0] * g.m[0][2] + inv.m[r][1] * g.m[1][2] + inv.m[r][2] * g.m[2][2]);
+                        }
+                        snprintf(line, sizeof line, "offhand_from_muzzle %.3f %.3f %.3f fwd %.3f %.3f %.3f weapon %d\n", p[0], p[1],
+                                 p[2], f[0], f[1], f[2], held_weapon);
+                        extra += line;
+                    }
+                    strncat(notes, extra.c_str(), sizeof notes - strlen(notes) - 1);
+                }
                 ei.snap = true;
                 ei.snap_notes = notes;
             }

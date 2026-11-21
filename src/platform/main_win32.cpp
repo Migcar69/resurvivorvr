@@ -940,7 +940,9 @@ std::string frontend_snapshot(const std::string &notes) {
              t.wHour, t.wMinute, t.wSecond);
     std::string base = name;
     bool ok = state_save((base + ".st").c_str());
-    if (g_capture) dump_capture((base + "_cap.txt").c_str());
+#ifdef PSXVR_DEV
+    if (g_capture) dump_capture((base + "_cap.txt").c_str());  // (development: the frame's 3D capture, for analysis)
+#endif
     std::vector<u32> px;
     int w, h;
     display_to_rgba(px, w, h);

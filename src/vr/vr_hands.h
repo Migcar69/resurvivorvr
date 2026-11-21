@@ -18,6 +18,11 @@ struct HandState {
     bool pistol = false;  // the hand holds the pistol (fingers round its grip, index on the trigger)
     float kick = 0;       // 0..1 recoil of the pistol (a shot just left it)
     float ray_len = 4;    // metres of aim ray drawn; with dot, a bright dot where it ends (what it hits)
+    // A long gun held with both hands: the weapon turns about the fist so that its support point (support_anchor, in
+    // the weapon's frame: metres, -Z barrel, +Y up, origin = fist) lies towards the other hand (support_pos, LOCAL)
+    bool support = false;
+    float support_pos[3] = {0, 0, 0};
+    float support_anchor[3] = {0, 0, 0};
     bool ray_dot = false;
     int arc_n = 0;        // >= 2: the aim ray is this curve instead (LOCAL points; the grenade gun's arc)
     float arc[64][3] = {};

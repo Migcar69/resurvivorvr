@@ -36,7 +36,8 @@ The game's memory card is the file `memcard0.mcd` in the same folder (created on
 | Weapon hand (right by default) | holds the weapon: the shot goes where the barrel points |
 | Trigger | fire |
 | Right stick left / right | turn (in the options: snap 30°, snap 45°, smooth or none) |
-| Right stick click, held | recentre the view |
+| Right stick click | short: **save** (a save state in `states\`; load it from the VR options) · held: recentre the view |
+| Other hand, grip (shotgun) | hold the shotgun by its pump: the barrel then points from your weapon hand through the other |
 | Y (or Menu) | item / map menu (the game's GunCon A + B) |
 | Walking around the room | your character follows you, with the game's collisions |
 
@@ -59,6 +60,7 @@ Open them with **X** in a menu. They are saved in `vr_options.ini`.
 | Game HUD | on / off (weapon, bullets and condition on a panel low in the view) |
 | HUD distance | normal / near / far |
 | Headshot visual feedback | off / on (a zombie killed by the critical shot loses its head, with a burst of blood) |
+| Load save | the saves made with the right stick click, newest first (stick left / right to choose, A to load) |
 
 ## The weapons in your hand
 

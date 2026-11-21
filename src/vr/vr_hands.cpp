@@ -263,6 +263,32 @@ void build_hand(std::vector<V> &out, const HandState &h, float side) {
 Mat4 pistol_frame(const HandState &h) {
     Mat4 f = h.aim;
     for (int r = 0; r < 3; r++) f.m[r][3] = h.grip.m[r][3];
+    if (h.support) {
+        // both hands: the smallest turn that brings the support point's direction (from the fist) onto the other
+        // hand's (the roll stays the weapon hand's)
+        float w[3], d[3];
+        for (int r = 0; r < 3; r++) {
+            w[r] = f.m[r][0] * h.support_anchor[0] + f.m[r][1] * h.support_anchor[1] + f.m[r][2] * h.support_anchor[2];
+            d[r] = h.support_pos[r] - f.m[r][3];
+        }
+        float lw = sqrtf(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]), ld = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (lw > 1e-4f && ld > 0.05f) {
+            for (int r = 0; r < 3; r++) w[r] /= lw, d[r] /= ld;
+            float ax[3] = {w[1] * d[2] - w[2] * d[1], w[2] * d[0] - w[0] * d[2], w[0] * d[1] - w[1] * d[0]};
+            float s = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]), c = w[0] * d[0] + w[1] * d[1] + w[2] * d[2];
+            if (s > 1e-5f) {
+                for (float &x : ax) x /= s;
+                float a = atan2f(s, c), ca = cosf(a), sa = sinf(a), t = 1 - ca;
+                float R[3][3] = {{t * ax[0] * ax[0] + ca, t * ax[0] * ax[1] - sa * ax[2], t * ax[0] * ax[2] + sa * ax[1]},
+                                 {t * ax[0] * ax[1] + sa * ax[2], t * ax[1] * ax[1] + ca, t * ax[1] * ax[2] - sa * ax[0]},
+                                 {t * ax[0] * ax[2] - sa * ax[1], t * ax[1] * ax[2] + sa * ax[0], t * ax[2] * ax[2] + ca}};
+                Mat4 g = f;
+                for (int r = 0; r < 3; r++)
+                    for (int k = 0; k < 3; k++) g.m[r][k] = R[r][0] * f.m[0][k] + R[r][1] * f.m[1][k] + R[r][2] * f.m[2][k];
+                f = g;
+            }
+        }
+    }
     float k = std::max(0.0f, std::min(1.0f, h.kick));
     // recoil pivots about the top of the grip: muzzle up, the gun pushed back
     return M(f, M(T(0, 0.05f, 0.02f * k), M(mat_rot_x(0.22f * k), T(0, -0.05f, 0))));
