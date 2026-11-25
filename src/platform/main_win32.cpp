@@ -630,6 +630,7 @@ static int run_headless(int frames, const char *shot, const char *vram_shot, con
         save_bmp(shot, px, w, h);
     }
     if (vram_shot) save_vram_bmp(vram_shot);
+    if (const char *gp = getenv("PSXVR_GRID_PREVIEW")) { extern void save_grid_preview(const char *); save_grid_preview(gp); }
     if (const char *raw = getenv("PSXVR_VRAM_RAW")) {  // development: the VRAM as it is (1024 x 512 16-bit words)
         if (FILE *f = fopen(raw, "wb")) { fwrite(gpu_vram(), 2, 1024 * 512, f); fclose(f); }
     }

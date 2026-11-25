@@ -632,6 +632,142 @@ struct TextPanel {
     }
 };
 
+// The saves to load, as a grid of pictures: 3 columns x 5 rows a page (each save's screenshot, states/<name>.bmp, with
+// its date and time under it), the chosen one framed in red; more pages when there are more than 15. Drawn with GDI
+// into a texture, again only when the page or the choice changes.
+struct SaveGrid {
+    static constexpr int COLS = 3, ROWS = 5, PER_PAGE = COLS * ROWS;
+    static constexpr int CELL_W = 370, CELL_H = 312, THUMB_W = 352, THUMB_H = 264, HEAD = 96, FOOT = 72, MARGIN = 26;
+    static constexpr int W = MARGIN * 2 + COLS * CELL_W, H = HEAD + ROWS * CELL_H + FOOT;
+    ID3D11Texture2D *tex = nullptr;
+    ID3D11ShaderResourceView *srv = nullptr;
+    std::string shown;
+    std::map<std::string, HBITMAP> thumbs;  // (loaded once each)
+    HBITMAP thumb(const std::string &st_name) {
+        auto it = thumbs.find(st_name);
+        if (it != thumbs.end()) return it->second;
+        std::string bmp = "states\\" + st_name.substr(0, st_name.size() - 3) + ".bmp";
+        HBITMAP b = (HBITMAP)LoadImageA(nullptr, bmp.c_str(), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+        thumbs[st_name] = b;
+        return b;
+    }
+    void render(const std::vector<std::string> &saves, int sel, const char *bmp_out = nullptr) {
+        int page = sel / PER_PAGE, pages = std::max(1, ((int)saves.size() + PER_PAGE - 1) / PER_PAGE);
+        std::string key = std::to_string(sel) + "/" + std::to_string(saves.size()) + (saves.empty() ? "" : saves[0]);
+        if (!bmp_out && srv && key == shown) return;
+        shown = key;
+        if (!tex && !bmp_out) {
+            D3D11_TEXTURE2D_DESC td = {};
+            td.Width = W, td.Height = H, td.MipLevels = td.ArraySize = 1;
+            td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+            td.SampleDesc.Count = 1;
+            td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            if (FAILED(dev->CreateTexture2D(&td, nullptr, &tex))) return;
+            dev->CreateShaderResourceView(tex, nullptr, &srv);
+        }
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+        bi.bmiHeader.biWidth = W, bi.bmiHeader.biHeight = -H, bi.bmiHeader.biPlanes = 1, bi.bmiHeader.biBitCount = 32;
+        void *bits = nullptr;
+        HDC dc = CreateCompatibleDC(nullptr);
+        HBITMAP bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        HGDIOBJ old = SelectObject(dc, bmp);
+        auto fill = [&](RECT r, COLORREF c) { HBRUSH b = CreateSolidBrush(c); FillRect(dc, &r, b); DeleteObject(b); };
+        auto frame = [&](RECT r, COLORREF c, int t) {
+            for (int i = 0; i < t; i++) {
+                HBRUSH b = CreateSolidBrush(c);
+                FrameRect(dc, &r, b);
+                DeleteObject(b);
+                InflateRect(&r, -1, -1);
+            }
+        };
+        fill({0, 0, W, H}, RGB(26, 22, 22));
+        frame({4, 4, W - 4, H - 4}, RGB(170, 30, 25), 2);
+        SetBkMode(dc, TRANSPARENT);
+        HFONT big = CreateFontA(-44, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Segoe UI");
+        HFONT fsmall = CreateFontA(-28, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, "Segoe UI");
+        HGDIOBJ oldf = SelectObject(dc, big);
+        SetTextColor(dc, RGB(230, 60, 45));
+        RECT hr = {MARGIN, 0, W - MARGIN, HEAD};
+        DrawTextA(dc, "LOAD SAVE", -1, &hr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, fsmall);
+        SetTextColor(dc, RGB(215, 170, 120));
+        std::string pg = saves.empty() ? "" : "page " + std::to_string(page + 1) + " / " + std::to_string(pages);
+        DrawTextA(dc, pg.c_str(), -1, &hr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        if (saves.empty()) {
+            SetTextColor(dc, RGB(200, 195, 190));
+            RECT r = {MARGIN, HEAD, W - MARGIN, H - FOOT};
+            DrawTextA(dc, "No saves yet: click the right stick while playing to save.", -1, &r,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        HDC tdc = CreateCompatibleDC(dc);
+        SetStretchBltMode(dc, HALFTONE);
+        SetBrushOrgEx(dc, 0, 0, nullptr);
+        for (int k = 0; k < PER_PAGE; k++) {
+            int i = page * PER_PAGE + k;
+            if (i >= (int)saves.size()) break;
+            int cx = MARGIN + (k % COLS) * CELL_W + (CELL_W - THUMB_W) / 2, cy = HEAD + (k / COLS) * CELL_H;
+            RECT tr = {cx, cy, cx + THUMB_W, cy + THUMB_H};
+            fill(tr, RGB(10, 10, 10));
+            if (HBITMAP tb = thumb(saves[i])) {
+                BITMAP bm;
+                GetObject(tb, sizeof bm, &bm);
+                HGDIOBJ o = SelectObject(tdc, tb);
+                StretchBlt(dc, cx, cy, THUMB_W, THUMB_H, tdc, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+                SelectObject(tdc, o);
+            }
+            bool on = i == sel;
+            RECT fr = tr;
+            InflateRect(&fr, 5, 5);
+            frame(fr, on ? RGB(230, 50, 35) : RGB(70, 60, 58), on ? 5 : 1);
+            SetTextColor(dc, on ? RGB(255, 255, 255) : RGB(200, 195, 190));
+            RECT lr = {cx, cy + THUMB_H + 6, cx + THUMB_W, cy + CELL_H - 4};
+            std::string lab = save_label(saves[i]);
+            DrawTextA(dc, lab.c_str(), -1, &lr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        DeleteDC(tdc);
+        SetTextColor(dc, RGB(200, 195, 190));
+        RECT fr = {MARGIN, H - FOOT, W - MARGIN, H - 8};
+        DrawTextA(dc, "Stick: choose     A: load     B / X: back", -1, &fr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        GdiFlush();
+        uint8_t *p = (uint8_t *)bits;
+        for (int i = 0; i < W * H; i++) p[i * 4 + 3] = 255;
+        if (bmp_out) {  // (development: the panel as a picture, PSXVR_GRID_PREVIEW)
+            if (FILE *f = fopen(bmp_out, "wb")) {
+                BITMAPFILEHEADER fh = {0x4d42, (DWORD)(sizeof fh + sizeof bi.bmiHeader + W * H * 4), 0, 0,
+                                       (DWORD)(sizeof fh + sizeof bi.bmiHeader)};
+                fwrite(&fh, sizeof fh, 1, f), fwrite(&bi.bmiHeader, sizeof bi.bmiHeader, 1, f), fwrite(bits, 4, (size_t)W * H, f);
+                fclose(f);
+            }
+        } else {
+            ctx->UpdateSubresource(tex, 0, nullptr, bits, W * 4, 0);
+        }
+        SelectObject(dc, oldf);
+        DeleteObject(big);
+        DeleteObject(fsmall);
+        SelectObject(dc, old);
+        DeleteObject(bmp);
+        DeleteDC(dc);
+    }
+    void forget_thumbs() {
+        for (auto &t : thumbs)
+            if (t.second) DeleteObject(t.second);
+        thumbs.clear();
+    }
+};
+
+// (development) the grid of saves drawn into a picture: PSXVR_GRID_PREVIEW=out.bmp[,chosen index] at the end of a
+// headless run
+void save_grid_preview_impl(const char *spec) {
+    std::string out = spec;
+    int sel = 0;
+    size_t c = out.find(',');
+    if (c != std::string::npos) sel = atoi(out.c_str() + c + 1), out = out.substr(0, c);
+    SaveGrid g;
+    auto saves = list_saves();
+    g.render(saves, std::max(0, std::min((int)saves.size() - 1, sel)), out.c_str());
+}
+
 // ---------------------------------------------------------------- desktop window
 // Shows the game on the monitor while it is played in the headset (for recording videos): 16:9, 80% of the usable
 // desktop height, its own view from the head as wide as both eyes together. Closing it ends the game.
@@ -829,11 +965,18 @@ void emu_thread_main() {
     bool was_running = false;
     while (!emu.quit && !M.quit) {
         EmuIn in;
+        // one-off requests (save, load a save) are taken out of the shared input into these and kept until a frame
+        // runs: taken and dropped on a turn that only waited for its time (or the VR side not running yet), a load or
+        // a save was lost now and then - it had to be asked for again
+        static bool pending_snap = false;
+        static std::string pending_notes, pending_load;
         {
             std::lock_guard<std::mutex> lk(emu.m);
             in = emu.in;
             swallow += emu.in.swallow;
             emu.in.swallow = 0;
+            if (emu.in.snap) pending_snap = true, pending_notes = emu.in.snap_notes;
+            if (!emu.in.load_path.empty()) pending_load = emu.in.load_path;
             emu.in.snap = false;
             emu.in.load_path.clear();
         }
@@ -849,9 +992,10 @@ void emu_thread_main() {
         if (frames >= due) { std::this_thread::sleep_for(std::chrono::milliseconds(1)); continue; }
         // a save picked in the VR options: the whole machine is put back (the game's code hooks stay); what VR keeps
         // of the game (headings, steps...) starts again as after a load at start
-        if (!in.load_path.empty()) {
-            load_ok = psx::state_load(in.load_path.c_str());
-            logf("vr: load %s: %s", in.load_path.c_str(), load_ok ? "ok" : "FAILED");
+        if (!pending_load.empty()) {
+            load_ok = psx::state_load(pending_load.c_str());
+            logf("vr: load %s: %s", pending_load.c_str(), load_ok ? "ok" : "FAILED");
+            pending_load.clear();
             game::on_state_loaded();
             last_render_emu = last_cap_emu = frames;
             release = 0, swallow = 12, back_step = false;
@@ -1129,8 +1273,9 @@ void emu_thread_main() {
             }
             g_gte_h_override = (u16)(room_h + local);
         }
-        if (in.snap) {
-            snap_name = frontend_snapshot(in.snap_notes);
+        if (pending_snap) {
+            pending_snap = false;
+            snap_name = frontend_snapshot(pending_notes);
             snaps++;
         }
         // hand over the results, the latest captured frame and the game's picture
@@ -1172,6 +1317,8 @@ void emu_thread_main() {
 }
 
 }  // namespace
+
+void save_grid_preview(const char *spec) { save_grid_preview_impl(spec); }
 
 int vr_main(int, char **) {
     // ---- instance
@@ -1294,6 +1441,9 @@ int vr_main(int, char **) {
     opt.load();
     game::set_headshot(opt.headshot);
     TextPanel menu_panel, hint_panel;
+    SaveGrid save_grid;                // the saves to load, as pictures (opened from the VR options' "Load save")
+    bool grid_open = false;
+    int grid_sel = 0;
     int menu_sel = 0;
     bool vr_menu_open = false;
     int menu_swallow = 0;  // emulated frames the game still gets no input after the panel closed
@@ -1531,10 +1681,25 @@ int vr_main(int, char **) {
             (void)hint_until;
             if (!vr_menu_open && menu_screen && pressed[B_X]) {
                 vr_menu_open = true;
+                grid_open = false;
                 menu_sel = 0;
                 load_list = list_saves();
                 load_pick = 0;
                 menu_pose = ahead(1.0f, 0.12f);
+            } else if (vr_menu_open && grid_open) {
+                // the grid of saves: the stick moves the frame (a row down / up, a column right / left; across pages
+                // at the ends), A loads that save, B / X go back to the options
+                int n = (int)load_list.size();
+                if (pressed[B_X] || pressed[B_B]) grid_open = false;
+                else if (n > 0) {
+                    if (step) grid_sel -= step * SaveGrid::COLS;  // (step +1 = stick up)
+                    if (xstep) grid_sel += xstep;
+                    grid_sel = std::max(0, std::min(n - 1, grid_sel));
+                    if (pressed[B_A]) {
+                        load_request = "states/" + load_list[grid_sel];
+                        vr_menu_open = false, grid_open = false, menu_swallow = 12;
+                    }
+                }
             } else if (vr_menu_open) {
                 if (pressed[B_X] || pressed[B_B]) vr_menu_open = false, menu_swallow = 12;
 #ifdef PSXVR_DEV
@@ -1554,14 +1719,11 @@ int vr_main(int, char **) {
 #ifdef PSXVR_DEV
                     if (menu_sel == 6 && pressed[B_A]) snap_request = true;
 #endif
-                    if (menu_sel == LOAD_LINE && !load_list.empty()) {
-                        if (pressed[B_A]) {
-                            load_request = "states/" + load_list[load_pick];
-                            vr_menu_open = false, menu_swallow = 12;
-                        } else {
-                            // stick right = older, left = newer
-                            load_pick = std::max(0, std::min((int)load_list.size() - 1, load_pick + change));
-                        }
+                    if (menu_sel == LOAD_LINE && pressed[B_A]) {
+                        // the grid of saves, with their pictures (the newest first)
+                        load_list = list_saves();
+                        save_grid.forget_thumbs();
+                        grid_open = true, grid_sel = 0;
                     }
                     opt.save();
                 }
@@ -1579,22 +1741,18 @@ int vr_main(int, char **) {
                     std::string(menu_sel == 5 ? ">" : "") + "Headshot visual feedback\t" + (opt.headshot ? "ON" : "OFF"),
                 };
 #ifdef PSXVR_DEV
+                const int load_line = 7;
                 lines.push_back(std::string(menu_sel == 6 ? ">" : "") + "Save state for analysis\t" +
                                 (snap_name.empty() ? "A" : snap_name));
-                lines.push_back(std::string(menu_sel == 7 ? ">" : "") + "Load state\t" +
-                                (load_list.empty() ? std::string("NONE")
-                                                   : "<  " + save_label(load_list[load_pick]) + "  >  " +
-                                                         std::to_string(load_pick + 1) + "/" + std::to_string(load_list.size())));
-                lines.push_back("Stick: select / adjust     A: change / load     B / X: close");
 #else
-                lines.push_back(std::string(menu_sel == 6 ? ">" : "") + "Load save\t" +
-                                (load_list.empty() ? std::string("NONE")
-                                                   : "<  " + save_label(load_list[load_pick]) + "  >  " +
-                                                         std::to_string(load_pick + 1) + "/" + std::to_string(load_list.size())));
-                lines.push_back("Stick: select / adjust     A: change / load     B / X: close");
-                lines.push_back("Right stick click: save");
+                const int load_line = 6;
 #endif
+                lines.push_back(std::string(menu_sel == load_line ? ">" : "") + "Load save\t" +
+                                (load_list.empty() ? std::string("NONE") : std::to_string(load_list.size()) + "  >"));
+                lines.push_back("Stick: select / adjust     A: change / open     B / X: close");
+                lines.push_back("Right stick click: save");
                 menu_panel.render(lines, 1024, 640);
+                if (grid_open) save_grid.render(load_list, grid_sel);
             } else if (show_hint) {
                 hint_panel.render({"X: VR options"}, 512, 96);
             }
@@ -2094,7 +2252,10 @@ int vr_main(int, char **) {
                     } else {
                         draw_quad(mul(view_proj, screen_model), game_srv, false);
                     }
-                    if (vr_menu_open && menu_panel.srv)
+                    if (vr_menu_open && grid_open && save_grid.srv)
+                        draw_quad(mul(view_proj, mul(menu_pose, mat_scale(0.42f * SaveGrid::W / (float)SaveGrid::H, 0.42f, 1))),
+                                  save_grid.srv, false);
+                    else if (vr_menu_open && menu_panel.srv)
                         draw_quad(mul(view_proj, mul(menu_pose, mat_scale(0.4f, 0.25f, 1))), menu_panel.srv, false);
                     else if (show_hint && !show3d && hint_panel.srv)
                         draw_quad(mul(view_proj, mul(hint_pose, mat_scale(0.16f, 0.03f, 1))), hint_panel.srv, false);
@@ -2182,7 +2343,10 @@ int vr_main(int, char **) {
                     // here flat over the picture (the panel in the middle, 60% of the window's width; the message low)
                     {
                         float aspect = mirror.w / (float)mirror.h;
-                        if (vr_menu_open && menu_panel.srv) {
+                        if (vr_menu_open && grid_open && save_grid.srv) {
+                            float ph = 0.92f, pw = ph * SaveGrid::W / (float)SaveGrid::H / aspect;
+                            draw_quad(mat_scale(pw, ph, 1), save_grid.srv, false);
+                        } else if (vr_menu_open && menu_panel.srv) {
                             float pw = 0.6f, ph = pw * (640.0f / 1024.0f) * aspect;
                             if (ph > 0.9f) pw *= 0.9f / ph, ph = 0.9f;
                             draw_quad(mat_scale(pw, ph, 1), menu_panel.srv, false);

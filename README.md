@@ -60,7 +60,7 @@ Open them with **X** in a menu. They are saved in `vr_options.ini`.
 | Game HUD | on / off (weapon, bullets and condition on a panel low in the view) |
 | HUD distance | normal / near / far |
 | Headshot visual feedback | off / on (a zombie killed by the critical shot loses its head, with a burst of blood) |
-| Load save | the saves made with the right stick click, newest first (stick left / right to choose, A to load) |
+| Load save | A opens the saves made with the right stick click: a grid of their pictures, newest first, 15 a page (the stick chooses, A loads, B goes back) |
 
 ## The weapons in your hand
 
